@@ -27,16 +27,19 @@
 #     to help debug
 #     uses mktemp instead of using fixed file names 
 #     (can run multiple instances of script)
+# 3.0 full directory walk added, so entire trees can be converted (if not existing already)
+#
 
 #set -xv
 
-VERSION="2.1"
+VERSION="3.0"
 
 print_usage ()
 {
    echo "Usage: `basename $0` [options] <src-path>"
    echo "Options: -h   Print usage"
-   echo "         -d   Delete FLAC input file after processing"
+   echo "         -d   Debug level (0..2)"
+   echo "         -r   Remove FLAC input file after processing"
    echo "         -D<dest-path>   Path to output MP3 files (default is ../Mp3)"
    echo "         -Vn  Set the target bitrate (quality) of LAME VBR encoder"
    echo "          where n = 0 target bitrate 245 kbit/s"
@@ -55,14 +58,288 @@ print_usage ()
    echo "<src-path> should be a relative path for correct operation"
 }
 
+# Print diagnostic and error messages to stderr
+# $1: diagnostic level. Message printed if parameter <= set debug level
+# $2: message to be printed
+#
+printmsg ()
+{
+   if [ $(($1)) -le $((DBG_LEVEL)) ]
+   then
+      (>&2 echo "$2")
+   fi
+}
+
+
+# Traverse directory trees
+# $1: source path
+# $2: dest path
+#
+function traverse()
+{
+   for file in "$1"/* ; do
+      if [ ! -d "${file}" ]
+      then
+         printmsg 2 "__Checking file: ${file} for processing, extension: ${file##*.}"
+         if [ "${file##*.}" = "flac" ]
+         then
+            printmsg 1 "__File ${file} is a FLAC file and to be processed"
+            if [ ! -e "$2/${file%.*}.mp3" ]
+            then
+               printmsg 0 "__Converting file: ${file%.*}.flac"
+               printmsg 1 "__Destination file: $2/${file%.*}.mp3"
+               convertf2m "${file%.*}" "$2/${file%.*}"
+            else
+               printmsg 1 "__No conversion: $2/${file%.*}.mp3 exists"
+            fi
+         fi
+      else
+         printmsg 2 "__${file} is a directory, entering recursively"
+         printmsg 1 "__Checking existense of $2/${file}"
+         if [ ! -e "$2/${file}" ]
+         then
+            printmsg 2 "__Destination directory $2/${file} does not exist"
+            COUNTFILES=`ls -1 "${file}"/*.* 2>/dev/null | wc -l`
+            COUNTFLAC=`ls -1 "${file}"/*.flac 2>/dev/null | wc -l`
+            if [ $COUNTFILES == 0 ] || [ $COUNTFLAC != 0 ]
+            then
+               CRPATH="$2/${file}"
+               CRDIRSCRIPT=$(mktemp)
+               printmsg 0 "__Creating directory: $CRPATH"
+               echo "mkdir \"$CRPATH\"" >$CRDIRSCRIPT
+               chmod 700 $CRDIRSCRIPT
+               $CRDIRSCRIPT
+               rm $CRDIRSCRIPT
+            else
+               printmsg 1 "__Directory $2/${file} not created as source not empty and does not have FLAC files, files: $COUNTFILES, FLACs: $COUNTFLAC"
+            fi
+         else
+            printmsg 2 "__Directory $2/${file} exists"
+         fi
+         traverse "${file}" "$2"
+      fi
+   done
+}
+
+# Convert single FLAC file to Mp3
+# $1: source file with path (without .flac extension)
+# $2: destination file with path (without .mp3 extension)
+#
+convertf2m ()
+{
+   declare -i RESULT
+   declare -i COVEREXIST
+
+   printmsg 0 "============================================================"
+   printmsg 0 "File to be processed: $1.flac"
+   OUTF=$2.mp3
+   printmsg 0 "Output file name:    `basename "$OUTF"`"
+   
+   printmsg 0 "-------------------- Source tags ---------------------------"
+   ALBUM=`metaflac "$1.flac" --show-tag=ALBUM | sed s/.*=//g`
+   printmsg 0 "Album:                       <$ALBUM>"
+   ALBUMARTIST=`metaflac "$1.flac" --show-tag=ALBUMARTIST | sed s/.*=//g`
+   if [ -n "$ALBUMARTIST" ]
+   then
+      printmsg 0 "Album artist:                <$ALBUMARTIST>"
+   fi
+   ARTIST=`metaflac "$1.flac" --show-tag=ARTIST | sed s/.*=//g`
+   printmsg 0 "Artist:                      <$ARTIST>"
+   BAND=`metaflac "$1.flac" --show-tag=BAND | sed s/.*=//g`
+   if [ -n "$BAND" ]
+   then
+      printmsg 0 "Band/orchesra:               <$BAND>"
+   fi
+   COMMENT=`metaflac "$1.flac" --show-tag=COMMENT | sed s/.*=//g`
+   if [ -n "$COMMENT" ]
+   then
+      printmsg 0 "Comment:                     <$COMMENT>"
+   fi
+   COMPOSER=`metaflac "$1.flac" --show-tag=COMPOSER | sed s/.*=//g`
+   if [ -n "$COMPOSER" ]
+   then
+      printmsg 0 "Composer:                    <$COMPOSER>"
+   fi
+   DATE=`metaflac "$1.flac" --show-tag=DATE | sed s/.*=//g`
+   if [ -n "$DATE" ]
+   then
+      printmsg 0 "Date:                        <$DATE>"
+   fi
+   DISCNUMBER=`metaflac "$1.flac" --show-tag=DISCNUMBER | sed s/.*=//g`
+   if [ -n "$DISCNUMBER" ]
+   then
+      printmsg 0 "Disc #:                      <$DISCNUMBER>"
+   fi
+   GENRE=`metaflac "$1.flac" --show-tag=GENRE | sed s/.*=//g`
+   if [ -n "$GENRE" ]
+   then
+      printmsg 0 "Genre:                       <$GENRE>"
+   fi
+   TITLE=`metaflac "$1.flac" --show-tag=TITLE | sed s/.*=//g`
+   printmsg 0 "Title:                       <$TITLE>"
+   TOTALDISCS=`metaflac "$1.flac" --show-tag=TOTALDISCS | sed s/.*=//g`
+   if [ -n "$TOTALDISCS" ]
+   then
+      printmsg 0 "# of Discs:                  <$TOTALDISCS>"
+   fi
+   TOTALTRACKS=`metaflac "$1.flac" --show-tag=TOTALTRACKS | sed s/.*=//g`
+   if [ -n "$TOTALTRACKS" ]
+   then
+      printmsg 0 "# of Tracks:                 <$TOTALTRACKS>"
+   fi
+   TRACKNUMBER=`metaflac "$1.flac" --show-tag=TRACKNUMBER | sed s/.*=//g`
+   printmsg 0 "Track #:                     <$TRACKNUMBER>"
+   YEAR=`metaflac "$1.flac" --show-tag=YEAR | sed s/.*=//g`
+   if [ -n "$YEAR" ]
+   then
+      printmsg 0 "Year:                        <$YEAR>"
+   fi
+
+   if [ -n "$ALBUMARTIST" ]
+   then
+      TPE2=$ALBUMARTIST
+   else
+      if [ -n "$BAND" ]
+      then
+         TPE2=$BAND
+      else
+         TPE2=$ARTIST
+      fi
+   fi
+   if [ -n "$DATE" ]
+   then
+      TYER=$DATE
+   else
+	   if [ -n $YEAR ]
+		then
+         TYER=$YEAR
+      fi
+   fi
+   TALB=$ALBUM
+   TPE1=$ARTIST
+   TRCK=$TRACKNUMBER
+   TIT2=$TITLE
+   TCON=$GENRE
+   COMM=$COMMENT
+   if [ -n "$DISCNUMBER" ]
+   then
+      TPOS=$DISCNUMBER
+   else
+      TPOS="1"
+   fi
+   if [ -n "$TOTALDISCS" ]
+   then
+      TPOS="$TPOS/$TOTALDISCS"
+   else
+      TPOS="$TPOS/1"
+   fi
+   COVEREXIST=0
+   for img in "$TPE2 - $TALB" "$TALB" "cover" "Cover" "folder" "Folder" "front" "Front" 
+   do
+      for ext in "jpg" "gif" "png"
+      do
+         COVERFILE="`dirname "$1"`/"$img"."$ext""
+         printmsg 2 "Trying: $COVERFILE"
+         if [ -e "$COVERFILE" ]
+         then
+            COVEREXIST=1
+            break
+         fi
+      done
+      if [ $COVEREXIST -eq 1 ]
+      then
+         printmsg 1 "Cover image file found:      <`basename "$COVERFILE"`>"
+         APIC=$COVERFILE
+         break
+      fi
+   done
+   if [ $COVEREXIST -eq 0 ]
+   then
+      printmsg 0 "Cover image file:            <-none->"
+   fi
+
+   printmsg 0 "-------------------- Output tags ---------------------------"
+   printmsg 0 "TPOS (Disc number):          <$TPOS>"
+   printmsg 0 "TPE2 (Album artist/band):    <$TPE2>"
+   printmsg 0 "TALB (Album):                <$TALB>"
+   printmsg 0 "TRCK (Track number):         <$TRCK>"
+   printmsg 0 "TPE1 (Track artist):         <$TPE1>"
+   printmsg 0 "TIT2 (Track title):          <$TIT2>"
+   printmsg 0 "TCON (Genre):                <$TCON>"
+   printmsg 0 "TYER (Album date/year):      <$TYER>"
+   printmsg 0 "COMM (Comment):              <$COMM>"
+   if [ $COVEREXIST -eq 1 ]
+   then
+      printmsg 0 "APIC (Cover art file):       <`basename "$APIC"`>"
+   else
+      printmsg 0 "APIC (Cover art file):       <-none->"
+   fi
+   printmsg 0 ""
+
+   LAMEPARAMS="--ta \"${TPE1}\" --tl \"${TALB}\" --tn \"$TRCK\" --tt \"$TIT2\" "
+   if [ -n "$TPOS" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --tv TPOS=\"$TPOS\""
+   fi
+   if [ -n "$TPE2" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --tv TPE2=\"$TPE2\""
+   fi
+   if [ -n "$TCON" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --tg \"$TCON\""
+   fi
+   if [ -n "$TYER" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --ty \"$TYER\""
+   fi
+   if [ -n "$COMM" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --tc \"$COMM\""
+   fi
+   if [ -n "$APIC" ]
+   then
+      LAMEPARAMS="$LAMEPARAMS --ti \"$APIC\""
+   fi
+
+   LAMEPARAMS="flac -c -d \"$1.flac\" | lame  -V$LAME_VBR --add-id3v2 --pad-id3v2 $LAMEPARAMS - \"$OUTF\""
+   LAMESCRIPT=$(mktemp)
+   printmsg 2 "Temporary file for lame parameters: $LAMESCRIPT"
+   echo $LAMEPARAMS > $LAMESCRIPT
+   chmod 700 $LAMESCRIPT
+   $LAMESCRIPT
+   RESULT=$?
+   RESULTALL=$RESULTALL+$RESULT
+   if [ $RESULT = 0 ]
+   then
+      printmsg 0 "Current operation result: OK ($RESULT)"
+   else
+      printmsg 0 "Current operation result: *** Error *** ($RESULT)"
+      cat "$LAMESCRIPT"
+   fi
+   if [ -e "$LAMESCRIPT" ]
+   then
+      rm $LAMESCRIPT
+   fi
+   if [ $FLAC_DELETE -eq 1 ] && [ $RESULT -eq 0 ]; then
+      rm "$1.flac"
+      printmsg 0 "Input file $1.flac deleted."
+   fi
+   (( NUMFILES++ ))
+}
 
 NO_ARGS=0
 E_OPTERROR=85
 FLAC_DELETE=0
 MP3PATH="../Mp3"
 LAME_VBR=5
+DBG_LEVEL=0
+declare -i RESULTALL
+declare -i NUMFILES
+RESULTALL=0
+NUMFILES=0
 
-echo "`basename $0` [$VERSION] - FLAC to MP3 conversion script"
+echo "$(basename $0) [$VERSION] - FLAC to MP3 conversion script"
  
 # Test if script invoked without command-line arguments
 if [ $# -eq "$NO_ARGS" ]
@@ -71,251 +348,42 @@ then
    exit $E_OPTERROR
 fi
 
-while getopts ":dhD:V:" Option
+while getopts "d:rhD:V:" OPTION
    do
-      case $Option in
-         d ) FLAC_DELETE=1
-             echo "FLAC source files will be deleted after conversion";;
+      case $OPTION in
+         d ) if [ "$OPTARG" -ge 0 ] && [ "$OPTARG" -le 2 ]
+            then
+               DBG_LEVEL=$OPTARG
+               echo "Debug level is set to $DBG_LEVEL"
+            else
+               print_usage
+            fi;;
+         r ) FLAC_DELETE=1
+             printmsg 0 "FLAC source files will be deleted after conversion";;
          h ) print_usage;;
          D ) MP3PATH=$OPTARG
-             echo "MP3 output files will be written directory (relative to source dir): $MP3PATH";;
+            printmsg 0 "MP3 output files will be written directory (relative to source dir): $MP3PATH";;
          V ) if [ "$OPTARG" -ge 0 ] && [ "$OPTARG" -le 9 ]
-             then
-                LAME_VBR=$OPTARG
-                echo "LAME VBR quality is set to $LAME_VBR"
-             else
-                print_usage
-             fi;;
+            then
+               LAME_VBR=$OPTARG
+               printmsg 0 "LAME VBR quality is set to $LAME_VBR"
+            else
+               print_usage
+            fi;;
       esac
    done
 shift $(($OPTIND - 1))
 
-if [ ! -e "$MP3PATH/$1" ]
-then
-    CRPATH="$MP3PATH/$1"
-    CRDIRSCRIPT=$(mktemp)
-    echo "Creating directory: $CRPATH"
-    echo "mkdir \"$CRPATH\"" >$CRDIRSCRIPT
-    chmod 700 $CRDIRSCRIPT
-    $CRDIRSCRIPT
-    rm $CRDIRSCRIPT
-fi
+traverse $1 $MP3PATH
 
-declare -i RESULTALL
-declare -i RESULT
-declare -i NUMFILES
-declare -i COVEREXIST
-
-RESULTALL=0
-NUMFILES=0
-
-for a in "$1/"*.flac; do
-    echo "============================================================"
-    echo "File to be processed: $a"
-    OUTF=${a%.flac}.mp3
-    echo "Output file name:    `basename "$OUTF"`"
-    OUTF="$MP3PATH/$OUTF"
-
-    echo "-------------------- Source tags ---------------------------"
-    ALBUM=`metaflac "$a" --show-tag=ALBUM | sed s/.*=//g`
-    echo "Album:                       <$ALBUM>"
-    ALBUMARTIST=`metaflac "$a" --show-tag=ALBUMARTIST | sed s/.*=//g`
-    if [ -n "$ALBUMARTIST" ]
-    then
-        echo "Album artist:                <$ALBUMARTIST>"
-    fi
-    ARTIST=`metaflac "$a" --show-tag=ARTIST | sed s/.*=//g`
-    echo "Artist:                      <$ARTIST>"
-    BAND=`metaflac "$a" --show-tag=BAND | sed s/.*=//g`
-    if [ -n "$BAND" ]
-    then
-        echo "Band/orchesra:               <$BAND>"
-    fi
-    COMMENT=`metaflac "$a" --show-tag=COMMENT | sed s/.*=//g`
-    if [ -n "$COMMENT" ]
-    then
-        echo "Comment:                     <$COMMENT>"
-    fi
-    COMPOSER=`metaflac "$a" --show-tag=COMPOSER | sed s/.*=//g`
-    if [ -n "$COMPOSER" ]
-    then
-        echo "Composer:                    <$COMPOSER>"
-    fi
-    DATE=`metaflac "$a" --show-tag=DATE | sed s/.*=//g`
-    if [ -n "$DATE" ]
-    then
-        echo "Date:                        <$DATE>"
-    fi
-    DISCNUMBER=`metaflac "$a" --show-tag=DISCNUMBER | sed s/.*=//g`
-    if [ -n "$DISCNUMBER" ]
-    then
-        echo "Disc #:                      <$DISCNUMBER>"
-    fi
-    GENRE=`metaflac "$a" --show-tag=GENRE | sed s/.*=//g`
-    if [ -n "$GENRE" ]
-    then
-        echo "Genre:                       <$GENRE>"
-    fi
-    TITLE=`metaflac "$a" --show-tag=TITLE | sed s/.*=//g`
-    echo "Title:                       <$TITLE>"
-    TOTALDISCS=`metaflac "$a" --show-tag=TOTALDISCS | sed s/.*=//g`
-    if [ -n "$TOTALDISCS" ]
-    then
-        echo "# of Discs:                  <$TOTALDISCS>"
-    fi
-    TOTALTRACKS=`metaflac "$a" --show-tag=TOTALTRACKS | sed s/.*=//g`
-    if [ -n "$TOTALTRACKS" ]
-    then
-        echo "# of Tracks:                 <$TOTALTRACKS>"
-    fi
-    TRACKNUMBER=`metaflac "$a" --show-tag=TRACKNUMBER | sed s/.*=//g`
-    echo "Track #:                     <$TRACKNUMBER>"
-    YEAR=`metaflac "$a" --show-tag=YEAR | sed s/.*=//g`
-    if [ -n "$YEAR" ]
-    then
-        echo "Year:                        <$YEAR>"
-    fi
-
-    if [ -n "$ALBUMARTIST" ]
-    then
-        TPE2=$ALBUMARTIST
-    else
-        if [ -n "$BAND" ]
-        then
-            TPE2=$BAND
-        else
-            TPE2=$ARTIST
-        fi
-    fi
-    if [ -n "$DATE" ]
-    then
-        TYER=$DATE
-    else
-	    if [ -n $YEAR ]
-		then
-            TYER=$YEAR
-		fi
-    fi
-    TALB=$ALBUM
-    TPE1=$ARTIST
-    TRCK=$TRACKNUMBER
-    TIT2=$TITLE
-    TCON=$GENRE
-    COMM=$COMMENT
-    if [ -n "$DISCNUMBER" ]
-    then
-        TPOS=$DISCNUMBER
-    else
-        TPOS="1"
-    fi
-    if [ -n "$TOTALDISCS" ]
-    then
-        TPOS="$TPOS/$TOTALDISCS"
-    else
-        TPOS="$TPOS/1"
-    fi
-    COVEREXIST=0
-    for img in "$TPE2 - $TALB" "$TALB" "cover" "Cover" "folder" "Folder" "front" "Front" 
-    do
-        for ext in "jpg" "gif" "png"
-        do
-            COVERFILE="`dirname "$a"`/"$img"."$ext""
-            # echo "Trying: $COVERFILE"
-            if [ -e "$COVERFILE" ]
-            then
-                COVEREXIST=1
-                break
-            fi
-        done
-        if [ $COVEREXIST -eq 1 ]
-        then
-            echo "Cover image file found:      <`basename "$COVERFILE"`>"
-            APIC=$COVERFILE
-            break
-        fi
-    done
-    if [ $COVEREXIST -eq 0 ]
-    then
-        echo "Cover image file:            <-none->"
-    fi
-
-    echo "-------------------- Output tags ---------------------------"
-    echo "TPOS (Disc number):          <$TPOS>"
-    echo "TPE2 (Album artist/band):    <$TPE2>"
-    echo "TALB (Album):                <$TALB>"
-    echo "TRCK (Track number):         <$TRCK>"
-    echo "TPE1 (Track artist):         <$TPE1>"
-    echo "TIT2 (Track title):          <$TIT2>"
-    echo "TCON (Genre):                <$TCON>"
-    echo "TYER (Album date/year):      <$TYER>"
-    echo "COMM (Comment):              <$COMM>"
-    if [ $COVEREXIST -eq 1 ]
-    then
-        echo "APIC (Cover art file):       <`basename "$APIC"`>"
-    else
-        echo "APIC (Cover art file):       <-none->"
-    fi
-    echo ""
-
-    LAMEPARAMS="--ta \"${TPE1}\" --tl \"${TALB}\" --tn \"$TRCK\" --tt \"$TIT2\" "
-    if [ -n "$TPOS" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --tv TPOS=\"$TPOS\""
-    fi
-    if [ -n "$TPE2" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --tv TPE2=\"$TPE2\""
-    fi
-    if [ -n "$TCON" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --tg \"$TCON\""
-    fi
-    if [ -n "$TYER" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --ty \"$TYER\""
-    fi
-    if [ -n "$COMM" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --tc \"$COMM\""
-    fi
-    if [ -n "$APIC" ]
-    then
-        LAMEPARAMS="$LAMEPARAMS --ti \"$APIC\""
-    fi
-
-    LAMEPARAMS="flac -c -d \"$a\" | lame  -V$LAME_VBR --add-id3v2 --pad-id3v2 $LAMEPARAMS - \"$OUTF\""
-    LAMESCRIPT=$(mktemp)
-    echo "Temporary file for lame parameters: $LAMESCRIPT"
-    echo $LAMEPARAMS > $LAMESCRIPT
-    chmod 700 $LAMESCRIPT
-    $LAMESCRIPT
-    RESULT=$?
-    RESULTALL=$RESULTALL+$RESULT
-    if [ $RESULT = 0 ]
-    then
-        echo "Current operation result: OK ($RESULT)"
-    else
-        echo "Current operation result: *** Error *** ($RESULT)"
-        cat "$LAMESCRIPT"
-    fi
-    if [ -e "$LAMESCRIPT" ]
-    then
-        rm $LAMESCRIPT
-    fi
-    if [ $FLAC_DELETE -eq 1 ] && [ $RESULT -eq 0 ]; then
-        rm "$a"
-        echo "Input file $a deleted."
-    fi
-    (( NUMFILES++ ))
-done
-echo "============================================================"
-echo "Conversion complete"
-echo "Files processed: $NUMFILES"
+printmsg 0 "============================================================"
+printmsg 0 "Conversion complete"
+printmsg 0 "Files processed: $NUMFILES"
 if [ $RESULTALL = 0 ]
 then
-    echo "Conversion process result: OK ($RESULTALL)"
+    printmsg 0 "Conversion process result: OK ($RESULTALL)"
 else
-    echo "Conversion process result: *** Error *** ($RESULTALL)"
+    printmsg 0 "Conversion process result: *** Error *** ($RESULTALL)"
 fi
 
 exit $RESULTALL

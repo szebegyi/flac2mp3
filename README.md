@@ -2,6 +2,14 @@
 title: FLAC2MP3 batch FLAC to MP3 converter
 ---
 
+Versions covered in this description
+====================================
+flac2mp3.sh 	v3.0
+utf2uc.c 	v1.0
+flat2hier.sh	v1.0
+flaclist.sh	v1.0
+
+
 Overall process and suggested tools to be used to rip CDs and build a library in FLAC and MP3
 =============================================================================================
 
@@ -177,19 +185,18 @@ less meanings. If quality is important then the original FLAC is to be played.
 For our purposes –V5 option is selected, which provides an approximately 80%
 reduction in file size compared to FLAC files.
 
-Usage of flac2mp3 script
-========================
+Usage of flac2mp3 script (v3.0)
+===============================
 
-The script converts all \*.flac files under \<src-path\> to MP3 format using
-LAME encoder. Result files are placed to \<dest-path\>/\<src-path\>, where the
-default is ../Mp3/\<src-path\>. The \<src-path\> should be a relative path for
-correct operation.
+The script converts entire directory tree containing FLAC files under \<src-path\> to MP3 format into the same tree structure using LAME encoder. Result files are placed to \<dest-path\>/\<src-path\>, where the default is ../Mp3/\<src-path\>. The \<src-path\> should be a relative path for correct operation.
 
 Usage: flac2mp3 [options] \<src-path\>
 
 Options: -h Print usage
 
 \-d Delete FLAC input file after processing
+
+\-r Remove FLAC input file after processing
 
 \-D\<dest-path\> Path to output MP3 files (default is ../Mp3)
 
@@ -215,8 +222,8 @@ n = 8 target bitrate 85 kbit/s
 
 n = 9 target bitrate 65 kbit/s
 
-Usage of catalog generator script
-=================================
+Usage of catalog generator script flaclist.sh (v1.0)
+====================================================
 
 Flaclist script is provided to create a catalog of the entire music library. It
 generates a CSV output which is then can be formatted and further processed e.g.
@@ -263,50 +270,7 @@ field filled in).
 How to generate scripts for mass conversion
 ===========================================
 
-The following directory structure is an example to be used for storing sound
-files:
-
-/Flac
-
-/Flac/Audiobook
-
-/Flac/Classical
-
-/Flac/Jazz
-
-/Flac/PopRock
-
-/Flac/Test
-
-/Flac/World
-
-The same structure exists for Mp3 as well.
-
-For mass conversion of a directory (e.g. Jazz) generate a script:
-
-\$ cd “/srv/userdata/\$MusicArchive/Flac”
-
-\$ ls -1 Jazz \>Jazz.sh
-
-\$ nano Jazz.sh
-
->   *Replace* \^ \~/flac3mp3 –D ../../Mp3/Jazz “
-
->   *Replace* \$ “
-
->   *Save, exit*
-
-\$ chmod 755 Jazz.sh
-
-\$ cd Jazz
-
-\$ ../Jazz.sh \| tee ../Jazz.log
-
-When ready, check result of each CD conversion with
-
-\$ grep “Conversion process” Jazz.log or
-
-\$ grep –B4 “Conversion process” Jazz.log or
+Starting with v3.0 the Flac2mp3 script can handle entire directory trees, therefore this procedure is obsolete and not needed anymore.
 
 Flat library or hierarchical
 ============================
@@ -326,8 +290,8 @@ underneath it a second level for ‘Album’s.
 
 The ‘flat2hier.sh’ script is used to do that conversion.
 
-Usage of flat2hier.sh script
-============================
+Usage of flat2hier.sh script (v1.0)
+===================================
 
 The flat2hier.sh script converts the above flat ‘Artist – Album’ structure to
 the ‘Artist’ as first level and ‘Album’ as second level structure.
